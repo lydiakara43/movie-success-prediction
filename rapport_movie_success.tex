@@ -1,0 +1,782 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{float}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+
+\geometry{margin=2.25cm}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!45!black,
+    urlcolor=blue!45!black,
+    citecolor=blue!45!black
+}
+
+\definecolor{mainblue}{HTML}{1F4E79}
+\definecolor{softblue}{HTML}{EEF5FB}
+\definecolor{softgreen}{HTML}{EDF7EF}
+\definecolor{softred}{HTML}{FFF0F0}
+\definecolor{codegray}{HTML}{F7F7F7}
+\definecolor{darkgray}{HTML}{444444}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\textit{Movie Success Prediction}}
+\rhead{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\titleformat{\section}{\Large\bfseries\color{mainblue}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries\color{mainblue}}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{darkgray}}{\thesubsubsection}{0.7em}{}
+
+\setlist[itemize]{leftmargin=1.5em, itemsep=0.15em}
+\setlist[enumerate]{leftmargin=1.7em, itemsep=0.15em}
+
+\lstdefinestyle{pythonstyle}{
+    language=Python,
+    basicstyle=\ttfamily\footnotesize,
+    backgroundcolor=\color{codegray},
+    frame=single,
+    rulecolor=\color{black!15},
+    breaklines=true,
+    columns=fullflexible,
+    keepspaces=true,
+    showstringspaces=false,
+    keywordstyle=\color{blue!65!black}\bfseries,
+    commentstyle=\color{green!35!black},
+    stringstyle=\color{red!55!black},
+    numbers=left,
+    numberstyle=\tiny\color{darkgray},
+    xleftmargin=1.2em,
+    framexleftmargin=1.2em
+}
+\lstset{style=pythonstyle}
+
+\newtcolorbox{resultbox}[1]{
+    colback=softgreen,
+    colframe=green!40!black,
+    title=\textbf{#1},
+    arc=1.5mm,
+    boxrule=0.7pt
+}
+
+\newtcolorbox{warningbox}[1]{
+    colback=softred,
+    colframe=red!55!black,
+    title=\textbf{#1},
+    arc=1.5mm,
+    boxrule=0.7pt
+}
+
+\newtcolorbox{methodbox}[1]{
+    colback=softblue,
+    colframe=mainblue,
+    title=\textbf{#1},
+    arc=1.5mm,
+    boxrule=0.7pt
+}
+
+\title{\textbf{Prédiction du succès et du revenu des films}\\
+\large Compte rendu rigoureux de machine learning}
+\author{Projet Machine Learning}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+Ce rapport présente un pipeline complet de data science appliqué à la prédiction du revenu et du succès commercial d'un film. Le problème est formulé sous deux angles complémentaires : une tâche de régression visant à prédire le revenu ajusté, et une tâche de classification visant à prédire si le film dépasse un seuil de rentabilité. Le protocole suit une démarche reproductible : nettoyage, création de variables, séparation train/test, normalisation, encodage catégoriel, entraînement de modèles supervisés, évaluation par métriques adaptées, puis analyse non supervisée par PCA et K-means. Une attention particulière est portée à la fuite de données, car la cible de succès est construite à partir du revenu.
+\end{abstract}
+
+\begin{resultbox}{Résultats principaux}
+Après nettoyage, l'échantillon exploitable contient \textbf{3\,854 films}. Le meilleur modèle de régression est un \textbf{Random Forest Regressor} avec un RMSLE de \textbf{1.727}, un RMSE de \textbf{175.42 millions USD} et un $R^2$ de \textbf{0.334}. Le meilleur modèle de classification supervisé est un \textbf{Random Forest Classifier} avec une accuracy de \textbf{0.636}, une balanced accuracy de \textbf{0.631}, un F1-score de \textbf{0.677} et un ROC-AUC de \textbf{0.667}.
+\end{resultbox}
+
+\tableofcontents
+\newpage
+
+\section{Objectif et problématique}
+
+Le projet vise à répondre à une question économique et prédictive : peut-on estimer, à partir de caractéristiques simples d'un film, son revenu futur et sa probabilité de succès commercial ?
+
+Deux problèmes de machine learning sont donc définis :
+\begin{enumerate}
+    \item \textbf{Régression} : prédire une variable continue, le revenu ajusté du film.
+    \item \textbf{Classification} : prédire une variable binaire, le succès ou non-succès commercial.
+\end{enumerate}
+
+La séparation de ces deux objectifs est importante : la régression cherche à approximer un montant monétaire, tandis que la classification transforme la question en décision binaire autour d'un seuil économique.
+
+\subsection{Notation formelle}
+
+On note le dataset :
+\[
+\mathcal{D} = \{(x_i, y_i, c_i)\}_{i=1}^{n},
+\]
+où :
+\begin{itemize}
+    \item $x_i \in \mathbb{R}^p$ représente le vecteur de caractéristiques du film $i$ ;
+    \item $y_i \in \mathbb{R}_+$ représente le revenu ajusté \texttt{revenue\_adj} ;
+    \item $c_i \in \{0,1\}$ représente la classe de succès commercial.
+\end{itemize}
+
+La cible de classification est définie par :
+\[
+c_i =
+\begin{cases}
+1, & \text{si } revenue\_adj_i > 2 \times budget\_adj_i,\\
+0, & \text{sinon.}
+\end{cases}
+\]
+
+Le retour sur investissement est défini par :
+\[
+ROI_i = \frac{revenue\_adj_i}{budget\_adj_i}.
+\]
+
+\begin{warningbox}{Point méthodologique central : éviter la fuite de données}
+Comme $c_i$ dépend directement de \texttt{revenue\_adj}, il serait incorrect d'utiliser \texttt{revenue}, \texttt{revenue\_adj} ou \texttt{ROI} comme variables explicatives du modèle de classification. Cela donnerait un modèle artificiellement excellent, mais inutilisable pour une vraie prédiction.
+\end{warningbox}
+
+\section{Données et nettoyage}
+
+Le fichier initial contient \textbf{10\,866 films} et \textbf{21 variables}. Parmi les variables disponibles, on trouve notamment le budget, le revenu, la popularité, la durée, les genres, l'année de sortie, le nombre de votes et la note moyenne.
+
+Le nettoyage repose sur une observation importante : dans ce dataset, une valeur nulle de budget ou de revenu ne signifie généralement pas que le film a réellement coûté ou rapporté zéro. Elle correspond plutôt à une information manquante. Pour entraîner un modèle de revenu ou de succès commercial, ces observations doivent être exclues.
+
+\subsection{Filtrage mathématique}
+
+On conserve l'ensemble des indices :
+\[
+\mathcal{I} =
+\left\{
+i :
+budget\_adj_i > 0,\;
+revenue\_adj_i > 0,\;
+runtime_i > 0,\;
+genres_i \neq \varnothing
+\right\}.
+\]
+
+Après filtrage, le dataset modelisable contient :
+\[
+|\mathcal{I}| = 3\,854.
+\]
+
+Le taux de succès observé est :
+\[
+\frac{1}{n}\sum_{i=1}^{n} c_i = 0.524.
+\]
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{figures/01_missing_zero_counts.png}
+\caption{Diagnostic des valeurs manquantes et des zéros structurels. Les zéros de budget et de revenu sont les principaux obstacles au modèle.}
+\end{figure}
+
+\subsection{Extrait de code : nettoyage et cible}
+
+\begin{lstlisting}[caption={Création de l'échantillon propre et de la cible de succès.}]
+df_model = df[
+    (df["budget_adj"] > 0)
+    & (df["revenue_adj"] > 0)
+    & (df["runtime"] > 0)
+    & df["genres"].notna()
+    & df["release_year"].notna()
+].copy()
+
+df_model["roi"] = df_model["revenue_adj"] / df_model["budget_adj"]
+df_model["success"] = (
+    df_model["revenue_adj"] > 2 * df_model["budget_adj"]
+).astype(int)
+\end{lstlisting}
+
+\section{Feature engineering}
+
+Le feature engineering transforme les variables brutes en variables exploitables par les modèles.
+
+\subsection{Variables numériques retenues}
+
+Le modèle principal utilise des variables plausiblement disponibles avant ou au moment de la sortie :
+\[
+x_i = (budget\_adj_i,\; runtime_i,\; release\_year_i,\; release\_month_i,\; genre\_count_i,\; g_{i1},\ldots,g_{iq},\ldots).
+\]
+
+Les genres sont encodés en variables binaires :
+\[
+g_{ij} =
+\begin{cases}
+1, & \text{si le film } i \text{ appartient au genre } j,\\
+0, & \text{sinon.}
+\end{cases}
+\]
+
+Les variables catégorielles \texttt{main\_genre} et \texttt{release\_season} sont transformées par one-hot encoding.
+
+\subsection{Normalisation}
+
+Pour les modèles sensibles aux distances ou aux échelles, notamment KNN et la régression logistique, les variables numériques sont standardisées :
+\[
+\tilde{x}_{ij} = \frac{x_{ij} - \mu_j}{\sigma_j},
+\]
+où $\mu_j$ et $\sigma_j$ sont calculés uniquement sur le jeu d'entraînement.
+
+\begin{methodbox}{Pipeline de préparation}
+Le prétraitement est encapsulé dans un \texttt{ColumnTransformer}. Cela garantit que la normalisation et l'encodage sont appris sur le train set, puis appliqués au test set sans fuite d'information.
+\end{methodbox}
+
+\begin{lstlisting}[caption={Préprocesseur commun aux modèles.}]
+def make_preprocessor():
+    return ColumnTransformer(
+        transformers=[
+            ("num", StandardScaler(), numeric_features),
+            ("cat", OneHotEncoder(handle_unknown="ignore",
+                                  sparse_output=False),
+             categorical_features),
+        ],
+        remainder="drop",
+    )
+\end{lstlisting}
+
+\section{Analyse exploratoire}
+
+Les budgets et revenus de films suivent une distribution très asymétrique : quelques blockbusters concentrent une part massive des revenus. Pour cette raison, l'échelle logarithmique est plus informative que l'échelle brute.
+
+\[
+z_i = \log(1 + revenue\_adj_i).
+\]
+
+Cette transformation réduit l'influence excessive des valeurs extrêmes et permet de comparer les ordres de grandeur.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{figures/02_budget_revenue_distribution.png}
+\caption{Distribution du revenu ajusté et relation budget--revenu en échelle logarithmique.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{figures/03_genre_success.png}
+\caption{Fréquence et taux de succès des principaux genres.}
+\end{figure}
+
+\section{Protocole expérimental}
+
+Les données sont séparées en un jeu d'entraînement et un jeu de test :
+\[
+\mathcal{D} = \mathcal{D}_{train} \cup \mathcal{D}_{test},
+\quad
+\mathcal{D}_{train} \cap \mathcal{D}_{test} = \varnothing.
+\]
+
+Le split utilisé est de 80\% pour l'entraînement et 20\% pour le test. Pour la classification, la séparation est stratifiée afin de conserver un taux de succès similaire dans les deux sous-échantillons.
+
+\begin{lstlisting}[caption={Séparation train/test avec stratification sur la cible binaire.}]
+X_train, X_test, y_reg_train, y_reg_test, y_clf_train, y_clf_test = \
+    train_test_split(
+        X,
+        y_reg,
+        y_clf,
+        test_size=0.20,
+        random_state=RANDOM_STATE,
+        stratify=y_clf,
+    )
+\end{lstlisting}
+
+\section{Modèles de régression}
+
+L'objectif de la régression est d'apprendre une fonction :
+\[
+f_\theta : \mathbb{R}^p \rightarrow \mathbb{R}_+
+\]
+telle que :
+\[
+\hat{y}_i = f_\theta(x_i) \approx y_i.
+\]
+
+En pratique, les modèles apprennent la cible transformée :
+\[
+z_i = \log(1 + y_i),
+\]
+puis la prédiction est retransformée :
+\[
+\hat{y}_i = \exp(\hat{z}_i) - 1.
+\]
+
+\subsection{Baseline : médiane}
+
+Le modèle naïf prédit toujours la médiane du revenu d'entraînement :
+\[
+\hat{y}_i = \text{median}(y_{train}).
+\]
+Il sert de point de comparaison minimal.
+
+\subsection{Régression linéaire}
+
+La régression linéaire suppose une relation affine :
+\[
+\hat{z}_i = \beta_0 + x_i^\top \beta.
+\]
+Les coefficients sont estimés en minimisant la somme des erreurs quadratiques :
+\[
+\min_{\beta_0,\beta}
+\sum_{i=1}^{n}
+\left(z_i - \beta_0 - x_i^\top\beta\right)^2.
+\]
+
+\subsection{Lasso}
+
+Le Lasso ajoute une pénalisation $L^1$ :
+\[
+\min_{\beta_0,\beta}
+\frac{1}{2n}
+\sum_{i=1}^{n}
+\left(z_i - \beta_0 - x_i^\top\beta\right)^2
++ \lambda \|\beta\|_1.
+\]
+
+Cette pénalisation peut annuler certains coefficients, donc produire une forme de sélection de variables.
+
+\subsection{Random Forest Regressor}
+
+Un Random Forest est un ensemble d'arbres de décision entraînés sur des échantillons bootstrap. Chaque arbre partitionne l'espace des variables pour minimiser l'impureté de régression. Pour un noeud $A$, le critère de variance peut s'écrire :
+\[
+\mathcal{L}(A) =
+\sum_{i \in A}
+(z_i - \bar{z}_A)^2.
+\]
+
+La prédiction finale est la moyenne des prédictions des $B$ arbres :
+\[
+\hat{z}_i =
+\frac{1}{B}
+\sum_{b=1}^{B}
+T_b(x_i).
+\]
+
+\begin{lstlisting}[caption={Modèle de régression avec transformation logarithmique de la cible.}]
+def make_log_target_model(estimator):
+    return TransformedTargetRegressor(
+        regressor=Pipeline([
+            ("preprocess", make_preprocessor()),
+            ("model", estimator),
+        ]),
+        func=np.log1p,
+        inverse_func=np.expm1,
+        check_inverse=False,
+    )
+\end{lstlisting}
+
+\section{Métriques de régression}
+
+Les métriques utilisées évaluent des aspects différents de l'erreur.
+
+\subsection{RMSE}
+
+\[
+RMSE =
+\sqrt{
+\frac{1}{n}
+\sum_{i=1}^{n}
+(y_i - \hat{y}_i)^2
+}.
+\]
+
+Le RMSE pénalise fortement les grandes erreurs, ce qui est pertinent pour les très gros échecs de prédiction.
+
+\subsection{MAE}
+
+\[
+MAE =
+\frac{1}{n}
+\sum_{i=1}^{n}
+|y_i - \hat{y}_i|.
+\]
+
+Le MAE est plus robuste aux valeurs extrêmes que le RMSE.
+
+\subsection{$R^2$}
+
+\[
+R^2 =
+1 -
+\frac{
+\sum_{i=1}^{n}
+(y_i - \hat{y}_i)^2
+}{
+\sum_{i=1}^{n}
+(y_i - \bar{y})^2
+}.
+\]
+
+Un $R^2$ positif indique que le modèle fait mieux que la prédiction constante $\bar{y}$ selon l'erreur quadratique.
+
+\subsection{RMSLE}
+
+\[
+RMSLE =
+\sqrt{
+\frac{1}{n}
+\sum_{i=1}^{n}
+\left[
+\log(1+y_i) - \log(1+\hat{y}_i)
+\right]^2
+}.
+\]
+
+Le RMSLE est particulièrement adapté aux revenus de films, car il mesure davantage les erreurs relatives d'ordre de grandeur que les erreurs absolues.
+
+\section{Résultats de régression}
+
+\begin{table}[H]
+\centering
+\small
+\caption{Performances des modèles de régression sur le jeu de test. Les montants sont en millions USD.}
+\begin{tabular}{lrrrrr}
+\toprule
+Modèle & RMSE & MAE & $R^2$ & RMSLE & MAPE \\
+\midrule
+Random Forest & 175.42 & 82.36 & 0.334 & 1.727 & 5103.551 \\
+LassoCV & 355.20 & 120.46 & -1.732 & 2.090 & 8548.366 \\
+Linear Regression & 395.23 & 129.47 & -2.382 & 2.104 & 7508.830 \\
+Dummy median & 228.11 & 116.11 & -0.127 & 2.491 & 45245.476 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{resultbox}{Interprétation}
+Le Random Forest est le meilleur modèle selon RMSLE et $R^2$. Le fait que les modèles linéaires aient un $R^2$ négatif en échelle monétaire montre que la relation entre les variables disponibles et le revenu est fortement non linéaire. Le Random Forest améliore l'erreur logarithmique, mais le RMSE reste élevé, ce qui confirme que les revenus de films sont difficiles à prédire à cause des valeurs extrêmes.
+\end{resultbox}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.68\linewidth]{figures/04_regression_observed_vs_predicted.png}
+\caption{Revenus observés et prédits par le meilleur modèle de régression. La diagonale représente la prédiction parfaite.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\linewidth]{figures/05_regression_feature_importance.png}
+\caption{Importance des variables dans le Random Forest de régression.}
+\end{figure}
+
+\section{Modèles de classification}
+
+L'objectif de la classification est d'apprendre une fonction :
+\[
+h_\theta : \mathbb{R}^p \rightarrow \{0,1\}.
+\]
+
+Lorsque le modèle produit une probabilité, on prédit :
+\[
+\hat{c}_i =
+\begin{cases}
+1, & \text{si } P(c_i=1 \mid x_i) \geq 0.5,\\
+0, & \text{sinon.}
+\end{cases}
+\]
+
+\subsection{Baseline majoritaire}
+
+Le baseline prédit toujours la classe la plus fréquente :
+\[
+\hat{c}_i = \arg\max_{k \in \{0,1\}} P(c=k).
+\]
+Il est indispensable pour vérifier que les modèles supervisés apportent une information réelle.
+
+\subsection{Régression logistique}
+
+La régression logistique modélise :
+\[
+P(c_i=1 \mid x_i)
+=
+\sigma(\beta_0 + x_i^\top\beta),
+\]
+où :
+\[
+\sigma(t)=\frac{1}{1+\exp(-t)}.
+\]
+
+Elle minimise la log-loss :
+\[
+\mathcal{L}(\beta)
+=
+-\sum_{i=1}^{n}
+\left[
+c_i \log(p_i)
++
+(1-c_i)\log(1-p_i)
+\right].
+\]
+
+\subsection{KNN}
+
+Le KNN classe un film à partir des $k$ observations les plus proches dans l'espace des variables normalisées. La distance utilisée est généralement euclidienne :
+\[
+d(x_i,x_j)
+=
+\sqrt{
+\sum_{\ell=1}^{p}
+(x_{i\ell}-x_{j\ell})^2
+}.
+\]
+
+La classe prédite est la classe majoritaire parmi les voisins :
+\[
+\hat{c}_i =
+\arg\max_{k \in \{0,1\}}
+\sum_{j \in \mathcal{N}_K(i)}
+\mathbf{1}(c_j=k).
+\]
+
+\subsection{Random Forest Classifier}
+
+Le Random Forest Classifier agrège plusieurs arbres de classification. Chaque arbre vote pour une classe, et la prédiction finale est obtenue par vote majoritaire :
+\[
+\hat{c}_i =
+\arg\max_{k \in \{0,1\}}
+\sum_{b=1}^{B}
+\mathbf{1}(T_b(x_i)=k).
+\]
+
+\begin{lstlisting}[caption={Comparaison des classifieurs.}]
+classification_models = {
+    "Dummy majority": DummyClassifier(strategy="most_frequent"),
+    "Logistic Regression": Pipeline([
+        ("preprocess", make_preprocessor()),
+        ("model", LogisticRegression(max_iter=5000)),
+    ]),
+    "KNN": GridSearchCV(
+        Pipeline([
+            ("preprocess", make_preprocessor()),
+            ("model", KNeighborsClassifier()),
+        ]),
+        param_grid={
+            "model__n_neighbors": [5, 9, 15, 21, 31, 45],
+            "model__weights": ["uniform", "distance"],
+        },
+        scoring="f1",
+        cv=5,
+    ),
+    "Random Forest": Pipeline([
+        ("preprocess", make_preprocessor()),
+        ("model", RandomForestClassifier(
+            n_estimators=300,
+            min_samples_leaf=4,
+            random_state=RANDOM_STATE,
+        )),
+    ]),
+}
+\end{lstlisting}
+
+\section{Métriques de classification}
+
+On note :
+\begin{itemize}
+    \item $TP$ : vrais positifs ;
+    \item $TN$ : vrais négatifs ;
+    \item $FP$ : faux positifs ;
+    \item $FN$ : faux négatifs.
+\end{itemize}
+
+\subsection{Accuracy}
+
+\[
+Accuracy =
+\frac{TP + TN}{TP + TN + FP + FN}.
+\]
+
+\subsection{Balanced accuracy}
+
+\[
+Balanced\ Accuracy
+=
+\frac{1}{2}
+\left(
+\frac{TP}{TP+FN}
++
+\frac{TN}{TN+FP}
+\right).
+\]
+
+Cette métrique est plus honnête que l'accuracy simple lorsqu'une classe est plus fréquente que l'autre.
+
+\subsection{Precision, recall et F1}
+
+\[
+Precision =
+\frac{TP}{TP+FP},
+\quad
+Recall =
+\frac{TP}{TP+FN}.
+\]
+
+\[
+F1 =
+2 \times
+\frac{Precision \times Recall}{Precision + Recall}.
+\]
+
+\subsection{ROC-AUC}
+
+La courbe ROC compare le taux de vrais positifs au taux de faux positifs pour différents seuils de décision. L'aire sous la courbe, ROC-AUC, vaut 0.5 pour un modèle aléatoire et 1 pour un modèle parfait.
+
+\section{Résultats de classification}
+
+\begin{table}[H]
+\centering
+\small
+\caption{Performances des modèles de classification sur le jeu de test.}
+\begin{tabular}{lrrrrrr}
+\toprule
+Modèle & Accuracy & Balanced acc. & Precision & Recall & F1 & ROC-AUC \\
+\midrule
+Random Forest & 0.636 & 0.631 & 0.632 & 0.730 & 0.677 & 0.667 \\
+Logistic Regression & 0.597 & 0.592 & 0.601 & 0.686 & 0.640 & 0.627 \\
+KNN & 0.586 & 0.583 & 0.598 & 0.641 & 0.619 & 0.648 \\
+Dummy majority & 0.524 & 0.500 & 0.524 & 1.000 & 0.688 & 0.500 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{warningbox}{Pourquoi le baseline a un F1 élevé ?}
+Le baseline majoritaire prédit toujours la classe ``succès''. Son recall vaut donc 1, ce qui gonfle artificiellement le F1-score. Cependant, sa balanced accuracy vaut 0.500 et son ROC-AUC vaut 0.500 : il ne discrimine pas réellement les films. Pour cette raison, le meilleur modèle retenu est le Random Forest supervisé.
+\end{warningbox}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.62\linewidth]{figures/06_classification_confusion_matrix.png}
+\caption{Matrice de confusion du Random Forest Classifier.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\linewidth]{figures/07_logistic_coefficients.png}
+\caption{Coefficients les plus influents de la régression logistique. Les coefficients positifs augmentent la probabilité estimée de succès.}
+\end{figure}
+
+\section{Analyse non supervisée : PCA et K-means}
+
+L'analyse non supervisée ne cherche pas à prédire une cible. Elle sert à explorer la structure des films et à identifier des profils.
+
+\subsection{PCA}
+
+La PCA cherche une projection linéaire maximisant la variance conservée. La première composante principale est :
+\[
+w_1 =
+\arg\max_{\|w\|=1}
+Var(Xw).
+\]
+
+Les composantes suivantes sont orthogonales aux précédentes. Dans ce projet, les deux premières composantes expliquent \textbf{20.5\%} de la variance transformée.
+
+\subsection{K-means}
+
+K-means cherche $K$ centroïdes $\mu_1,\ldots,\mu_K$ minimisant l'inertie intra-cluster :
+\[
+\min_{C_1,\ldots,C_K}
+\sum_{k=1}^{K}
+\sum_{x_i \in C_k}
+\|x_i - \mu_k\|^2.
+\]
+
+Le choix de $K$ est guidé par le score de silhouette :
+\[
+s(i) =
+\frac{b(i)-a(i)}
+{\max(a(i),b(i))},
+\]
+où $a(i)$ est la distance moyenne de $i$ aux points de son cluster, et $b(i)$ la distance moyenne au cluster voisin le plus proche.
+
+\begin{lstlisting}[caption={Recherche du nombre de clusters par silhouette.}]
+silhouette_rows = []
+for k in range(2, 9):
+    km = KMeans(n_clusters=k, n_init=30,
+                random_state=RANDOM_STATE)
+    labels = km.fit_predict(X_prepared)
+    silhouette_rows.append({
+        "k": k,
+        "silhouette": silhouette_score(X_prepared, labels),
+    })
+\end{lstlisting}
+
+\begin{table}[H]
+\centering
+\small
+\caption{Profil des clusters K-means. Les montants médians sont en millions USD.}
+\begin{tabular}{lrrrrrr}
+\toprule
+Cluster & n & Succès & Budget médian & Revenu médian & ROI médian & Genre dominant \\
+\midrule
+0 & 442 & 0.597 & 13.95 & 40.07 & 2.55 & Horror \\
+1 & 735 & 0.469 & 31.55 & 56.26 & 1.84 & Action \\
+2 & 346 & 0.564 & 71.14 & 153.68 & 2.31 & Animation \\
+3 & 1619 & 0.511 & 21.13 & 41.60 & 2.07 & Comedy \\
+4 & 592 & 0.552 & 79.79 & 169.37 & 2.26 & Action \\
+5 & 120 & 0.517 & 45.07 & 92.01 & 2.18 & Drama \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{figures/08_pca_kmeans.png}
+\caption{Sélection de $K$ par silhouette et projection PCA des clusters.}
+\end{figure}
+
+\section{Discussion critique}
+
+\subsection{Ce que les résultats montrent}
+
+Le Random Forest domine les modèles linéaires en régression et en classification. Cela indique que la relation entre les variables disponibles et les résultats commerciaux est non linéaire. Le budget est central, mais il ne suffit pas : la durée, les genres, l'année de sortie et la saison participent aussi à la prédiction.
+
+Le niveau de performance reste modéré. Ce résultat est réaliste : le succès d'un film dépend de nombreux facteurs absents du dataset, comme la campagne marketing, le nombre de salles, la concurrence au moment de la sortie, la notoriété des acteurs, la force d'une franchise ou la distribution internationale.
+
+\subsection{Limites statistiques}
+
+\begin{itemize}
+    \item Le nettoyage retire une grande partie des observations, car beaucoup de budgets et revenus sont nuls.
+    \item Les films extrêmes, notamment les blockbusters, dominent les erreurs monétaires.
+    \item Les variables disponibles ne décrivent pas entièrement le contexte économique de sortie.
+    \item Les métriques de classification doivent être interprétées avec prudence : le F1 du baseline majoritaire est trompeur.
+\end{itemize}
+
+\subsection{Améliorations possibles}
+
+Pour un système prédictif plus robuste, il faudrait enrichir les données avec :
+\begin{itemize}
+    \item le studio et le distributeur ;
+    \item le budget marketing ;
+    \item le nombre de salles à la sortie ;
+    \item l'existence d'une franchise ou d'une suite ;
+    \item les acteurs principaux et le réalisateur ;
+    \item la concurrence au box-office pendant la même fenêtre de sortie ;
+    \item des variables temporelles plus fines, comme le mois exact et les vacances.
+\end{itemize}
+
+\section{Conclusion}
+
+Le projet met en place une démarche complète et rigoureuse de machine learning : formulation du problème, nettoyage, feature engineering, prévention de la fuite de données, modélisation supervisée, comparaison par métriques adaptées, puis exploration non supervisée.
+
+La régression du revenu reste difficile, car les revenus cinématographiques sont très dispersés. Le Random Forest obtient néanmoins les meilleurs résultats avec un RMSLE de \textbf{1.727} et un $R^2$ de \textbf{0.334}. Pour la classification du succès, le Random Forest atteint une balanced accuracy de \textbf{0.631} et un ROC-AUC de \textbf{0.667}, ce qui montre une capacité de discrimination réelle mais perfectible.
+
+La conclusion principale est donc nuancée : les variables simples du dataset contiennent un signal prédictif, mais elles ne suffisent pas à expliquer pleinement le succès commercial d'un film. Le modèle est exploitable comme base de scoring exploratoire, mais un modèle industriel demanderait des données économiques et marketing plus riches.
+
+\end{document}
